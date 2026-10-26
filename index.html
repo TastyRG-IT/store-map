@@ -59,6 +59,9 @@ const BRAND_COLORS = [
   ["burger king", "#f5821f"], ["dunkin", "#ff671f"], ["baskin", "#e31c79"],
 ];
 const FALLBACK_COLOR = "#5f6b76";
+// Short names used inside the pin circle (Dunkin = DD; KFC + Taco Bell reads "KFC+TB").
+const SHORT_NAMES = { "taco bell": "TB", "baskin robbins": "BR", "dunkin": "DD", "pizza hut": "PH", "burger king": "BK" };
+const shortName = n => SHORT_NAMES[String(n).toLowerCase()] || n;
 const STAR = "M 0,-12 L 3.5,-4 L 12,-3.5 L 5.5,2.5 L 7.5,11 L 0,6.5 L -7.5,11 L -5.5,2.5 L -12,-3.5 L -3.5,-4 Z";
 const METERS_PER_MILE = 1609.344;
 
@@ -71,23 +74,30 @@ function brandColor(brand) {
 function isPipeline(status) {
   return /^(nro|new build)/i.test(String(status));
 }
-// Pin = a coloured circle with the brand name above a second line (miles, or the store number
-// when there is no searched point), both inside it. Drawn as an
-// SVG because a Google marker label can only hold one string. Long names get a smaller font.
-function pinIcon(color, brand, line2) {
+// Pin = a coloured circle with the brand name (and the miles, when there is a searched point)
+// inside it, and the store number in a small white tag floating above it. Drawn as an SVG
+// because a Google marker label can only hold one string. Long text gets a smaller font.
+function pinIcon(color, brand, number, miles, partnerColor) {
   const esc = t => String(t).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  const size = 50, c = size / 2, nameSize = brand.length <= 4 ? 11 : brand.length <= 8 ? 9 : 7.5,
-    line2Size = line2.length <= 5 ? 13 : line2.length <= 7 ? 10 : 8;
+  const R = 19, w = 46, tagH = 15, cy = tagH + 2 + R + 1, h = cy + R + 2, c = w / 2;
+  const nameSize = brand.length <= 4 ? 10.5 : brand.length <= 6 ? 9 : brand.length <= 9 ? 7.5 : 6.5,
+    tagW = Math.min(w, 10 + String(number).length * 6.5),
+    font = 'font-family="Arial,sans-serif" font-weight="700" text-anchor="middle"';
   const svg =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '">' +
-    '<circle cx="' + c + '" cy="' + c + '" r="23" fill="' + color + '" stroke="#ffffff" stroke-width="2"/>' +
-    '<text x="' + c + '" y="' + (c - 2) + '" text-anchor="middle" font-family="Arial,sans-serif" font-size="' + nameSize +
-    '" font-weight="700" fill="#ffffff">' + esc(brand) + '</text>' +
-    '<text x="' + c + '" y="' + (c + 12) + '" text-anchor="middle" font-family="Arial,sans-serif" font-size="' + line2Size + '" ' +
-    'font-weight="700" fill="#ffffff">' + esc(line2) + '</text></svg>';
+    '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">' +
+    '<rect x="' + (c - tagW / 2) + '" y="1" width="' + tagW + '" height="' + (tagH - 2) + '" rx="4" fill="#ffffff" ' +
+    'stroke="' + color + '" stroke-width="1.5"/>' +
+    '<text x="' + c + '" y="' + (tagH - 4) + '" ' + font + ' font-size="10" fill="#202124">' + esc(number) + '</text>' +
+    '<circle cx="' + c + '" cy="' + cy + '" r="' + R + '" fill="' + color + '"/>' +
+    // Combo store: the right half takes the partner brand's colour; the white ring is drawn last.
+    (partnerColor ? '<path d="M ' + c + ' ' + (cy - R) + ' A ' + R + ' ' + R + ' 0 0 1 ' + c + ' ' + (cy + R) + ' Z" fill="' + partnerColor + '"/>' : "") +
+    '<circle cx="' + c + '" cy="' + cy + '" r="' + R + '" fill="none" stroke="#ffffff" stroke-width="2"/>' +
+    '<text x="' + c + '" y="' + (miles ? cy - 2 : cy + 3.5) + '" ' + font + ' font-size="' + nameSize + '" fill="#ffffff">' + esc(brand) + '</text>' +
+    (miles ? '<text x="' + c + '" y="' + (cy + 10) + '" ' + font + ' font-size="10.5" fill="#ffffff">' + esc(miles) + '</text>' : "") +
+    '</svg>';
   return {
     url: "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg),
-    scaledSize: new google.maps.Size(size, size), anchor: new google.maps.Point(c, c),
+    scaledSize: new google.maps.Size(w, h), anchor: new google.maps.Point(c, cy),
   };
 }
 function el(tag, props, ...kids) {
@@ -125,6 +135,7 @@ async function readPayload() {
   const stores = data.s.map(r => ({
     brand: String(r[0]), number: String(r[1]), name: String(r[2]), address: String(r[3]), city: String(r[4]),
     state: String(r[5]), status: String(r[6]), lat: Number(r[7]), lng: Number(r[8]), miles: Number(r[9]), placeId: String(r[10] || ""),
+    partner: String(r[17] || ""),
     contacts: [["RGM", r[11], r[12]], ["DM", r[13], r[14]], ["RVP/DO", r[15], r[16]]]
       .map(([role, name, cell]) => ({ role, name: String(name || ""), cell: String(cell || "") }))
       .filter(c => c.name || c.cell),
@@ -143,9 +154,10 @@ function placeUrl(s) {
     ? "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(s.name || s.brand) + "&query_place_id=" + encodeURIComponent(s.placeId)
     : "https://www.google.com/maps/search/?api=1&query=" + s.lat + "," + s.lng;
 }
+const fullBrand = s => s.brand + (s.partner ? " + " + s.partner : "");
 function infoContent(origin, s) {
   const box = el("div", { class: "iw" });
-  box.append(el("b", { text: s.brand + " #" + s.number }), el("br"));
+  box.append(el("b", { text: fullBrand(s) + " #" + s.number }), el("br"));
   if (s.name) box.append(document.createTextNode(s.name), el("br"));
   box.append(document.createTextNode(s.address + ", " + s.city + ", " + s.state), el("br"),
              document.createTextNode((origin ? s.miles.toFixed(1) + " miles (straight line) - " : "") + s.status), el("br"));
@@ -197,20 +209,23 @@ async function initMap() {
   const seen = new Map();
   stores.forEach(s => {
     const color = brandColor(s.brand), faint = isPipeline(s.status);
-    seen.set(s.brand, color);
+    const partnerColor = s.partner ? brandColor(s.partner) : "";
+    const swatch = partnerColor ? "linear-gradient(90deg," + color + " 50%," + partnerColor + " 50%)" : color;
+    seen.set(fullBrand(s), swatch);
     const marker = new google.maps.Marker({
       // optimized:false = one real element per pin. Google's default repaints a few hundred
       // pins onto a canvas, which hides them from the page (and from titles/tests).
       map, position: { lat: s.lat, lng: s.lng }, opacity: faint ? .6 : 1, optimized: false,
-      title: s.brand + " #" + s.number,
-      icon: pinIcon(color, s.brand, origin ? s.miles.toFixed(1) : s.number),
+      title: fullBrand(s) + " #" + s.number,
+      icon: pinIcon(color, s.partner ? shortName(s.brand) + "+" + shortName(s.partner) : shortName(s.brand), s.number,
+                    origin ? s.miles.toFixed(1) : "", partnerColor),
     });
     const open = () => { info.setContent(infoContent(origin, s)); info.open({ map, anchor: marker }); };
     marker.addListener("click", open);
     const row = el("div", { class: "row" + (faint ? " pipeline" : "") },
       el("div", { class: "mi", text: origin ? s.miles.toFixed(1) + " mi" : "" }),
-      el("div", { class: "dot", style: "background:" + color }),
-      el("div", {}, el("div", { class: "t", text: s.brand + " #" + s.number }),
+      el("div", { class: "dot", style: "background:" + swatch }),
+      el("div", {}, el("div", { class: "t", text: fullBrand(s) + " #" + s.number }),
                     el("div", { class: "a", text: s.address + ", " + s.city + ", " + s.state + (faint ? " (" + s.status + ")" : "") })));
     row.addEventListener("click", () => { map.panTo(marker.getPosition()); open(); });
     list.append(row);
@@ -218,7 +233,7 @@ async function initMap() {
 
   const legend = document.getElementById("legend");
   if (origin) legend.append(el("span", {}, el("i", { style: "background:#fbbc04;border:1px solid #1f2933" }), document.createTextNode("Searched location")));
-  seen.forEach((color, brand) => legend.append(el("span", {}, el("i", { style: "background:" + color }), document.createTextNode(brand))));
+  seen.forEach((swatch, brand) => legend.append(el("span", {}, el("i", { style: "background:" + swatch }), document.createTextNode(brand))));
   const count = stores.length + " store" + (stores.length === 1 ? "" : "s");
   document.getElementById("sub").textContent = (origin
     ? count + " within " + radius + " miles of " + origin.label + ". Numbers on pins are straight-line miles."
