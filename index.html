@@ -199,7 +199,9 @@ async function initMap() {
     const color = brandColor(s.brand), faint = isPipeline(s.status);
     seen.set(s.brand, color);
     const marker = new google.maps.Marker({
-      map, position: { lat: s.lat, lng: s.lng }, opacity: faint ? .6 : 1,
+      // optimized:false = one real element per pin. Google's default repaints a few hundred
+      // pins onto a canvas, which hides them from the page (and from titles/tests).
+      map, position: { lat: s.lat, lng: s.lng }, opacity: faint ? .6 : 1, optimized: false,
       title: s.brand + " #" + s.number,
       icon: pinIcon(color, s.brand, origin ? s.miles.toFixed(1) : s.number),
     });
