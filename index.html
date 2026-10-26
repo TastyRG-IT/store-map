@@ -29,6 +29,7 @@
   .iw { font: 13px/1.45 system-ui, "Segoe UI", Roboto, sans-serif; max-width: 260px; }
   .iw b { font-size: 14px; }
   .iw a { color: var(--accent); text-decoration: none; display: inline-block; margin-top: 4px; margin-right: 10px; }
+  .iw a.tel { margin: 0; }
   @media (max-width: 700px) {
     #app { flex-direction: column-reverse; }
     #side { width: 100%; max-width: none; height: 38%; border-right: 0; border-top: 1px solid var(--line); }
@@ -112,6 +113,9 @@ function readPayload() {
   const stores = data.s.map(r => ({
     brand: String(r[0]), number: String(r[1]), name: String(r[2]), address: String(r[3]), city: String(r[4]),
     state: String(r[5]), status: String(r[6]), lat: Number(r[7]), lng: Number(r[8]), miles: Number(r[9]), placeId: String(r[10] || ""),
+    contacts: [["RGM", r[11], r[12]], ["DM", r[13], r[14]], ["RVP/DO", r[15], r[16]]]
+      .map(([role, name, cell]) => ({ role, name: String(name || ""), cell: String(cell || "") }))
+      .filter(c => c.name || c.cell),
   })).filter(s => Number.isFinite(s.lat) && Number.isFinite(s.lng));
   return { origin: { lat, lng, label: String(label) }, radius, stores };
 }
@@ -133,6 +137,12 @@ function infoContent(origin, s) {
   if (s.name) box.append(document.createTextNode(s.name), el("br"));
   box.append(document.createTextNode(s.address + ", " + s.city + ", " + s.state), el("br"),
              document.createTextNode(s.miles.toFixed(1) + " miles (straight line) - " + s.status), el("br"));
+  for (const c of s.contacts) {
+    box.append(el("br"), el("b", { text: c.role + ": " }), document.createTextNode(c.name || "(no name)"));
+    const digits = c.cell.replace(/[^0-9+]/g, "");  // only digits/+ ever reach the tel: link
+    if (digits) box.append(document.createTextNode(" - "), el("a", { href: "tel:" + digits, class: "tel", text: c.cell }));
+  }
+  box.append(el("br"));
   for (const [text, href] of [["Directions", directionsUrl(origin, s)], ["Open in Google Maps", placeUrl(s)]]) {
     box.append(el("a", { href, target: "_blank", rel: "noopener", text }));
   }
