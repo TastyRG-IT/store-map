@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRG Store Map</title>
+<style>
+  :root { --panel: #ffffff; --ink: #1f2933; --muted: #5f6b76; --line: #dde2e7; --accent: #1a73e8; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; font: 14px/1.4 system-ui, "Segoe UI", Roboto, sans-serif; color: var(--ink); }
+  #app { display: flex; height: 100%; }
+  #side { width: 340px; max-width: 42%; display: flex; flex-direction: column; background: var(--panel); border-right: 1px solid var(--line); }
+  #head { padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  #head h1 { font-size: 15px; margin: 0 0 4px; }
+  #head .sub { color: var(--muted); font-size: 12px; }
+  #legend { padding: 8px 14px; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; }
+  #legend span { display: inline-flex; align-items: center; gap: 5px; }
+  #legend i { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+  #list { overflow-y: auto; flex: 1; }
+  .row { display: flex; gap: 10px; padding: 9px 14px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .row:hover { background: #f3f6fa; }
+  .row .mi { min-width: 46px; font-weight: 600; text-align: right; }
+  .row .dot { width: 11px; height: 11px; border-radius: 50%; margin-top: 4px; flex: none; }
+  .row .t { font-weight: 600; }
+  .row .a { color: var(--muted); font-size: 12px; }
+  .row.pipeline { opacity: .65; }
+  #map { flex: 1; }
+  #msg { margin: 40px auto; max-width: 520px; padding: 0 20px; }
+  .iw { font: 13px/1.45 system-ui, "Segoe UI", Roboto, sans-serif; max-width: 260px; }
+  .iw b { font-size: 14px; }
+  .iw a { color: var(--accent); text-decoration: none; display: inline-block; margin-top: 4px; margin-right: 10px; }
+  @media (max-width: 700px) {
+    #app { flex-direction: column-reverse; }
+    #side { width: 100%; max-width: none; height: 38%; border-right: 0; border-top: 1px solid var(--line); }
+    #map { height: 62%; flex: none; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="side">
+    <div id="head"><h1>TRG Store Map</h1><div class="sub" id="sub">Loading...</div></div>
+    <div id="legend"></div>
+    <div id="list"></div>
+  </div>
+  <div id="map"></div>
+</div>
+
+<script>
+"use strict";
+// Restricted in Google Cloud to this page's address and to the Maps JavaScript
+// API only, so it is safe to be visible here.
+const MAPS_KEY = "AIzaSyDtFpJDLFF_jEihZiHChN4Dpe3XSCBg3L4";
+
+// Brand colours (matched on a lower-case "contains"); anything else is grey.
+const BRAND_COLORS = [
+  ["kfc", "#d71920"], ["pizza hut", "#1b7f3b"], ["taco bell", "#702082"],
+  ["burger king", "#f5821f"], ["dunkin", "#ff671f"], ["baskin", "#e31c79"],
+];
+const FALLBACK_COLOR = "#5f6b76";
+const STAR = "M 0,-12 L 3.5,-4 L 12,-3.5 L 5.5,2.5 L 7.5,11 L 0,6.5 L -7.5,11 L -5.5,2.5 L -12,-3.5 L -3.5,-4 Z";
+const METERS_PER_MILE = 1609.344;
+
+function brandColor(brand) {
+  const b = String(brand).toLowerCase();
+  for (const [key, color] of BRAND_COLORS) if (b.includes(key)) return color;
+  return FALLBACK_COLOR;
+}
+// Stores that are not trading yet (new builds, not-yet-open) are drawn fainter.
+function isPipeline(status) {
+  return /^(nro|new build)/i.test(String(status));
+}
+function el(tag, props, ...kids) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (k === "text") node.textContent = v; else if (k === "class") node.className = v; else node.setAttribute(k, v);
+  }
+  kids.forEach(k => node.append(k));
+  return node;
+}
+function showMessage(text) {
+  document.body.replaceChildren(el("div", { id: "msg", text }));
+}
+
+// Payload layout is written by nearby.map_payload() in store-lookup.
+function readPayload() {
+  const frag = location.hash.slice(1);
+  if (!frag) throw new Error("Open this page from the Nearby Stores window in Store Lookup (Open Map with Distances).");
+  const b64 = frag.replace(/-/g, "+").replace(/_/g, "/");
+  const bytes = Uint8Array.from(atob(b64 + "=".repeat((4 - b64.length % 4) % 4)), c => c.charCodeAt(0));
+  const data = JSON.parse(new TextDecoder().decode(bytes));
+  const [lat, lng, label] = data.o;
+  const radius = Number(data.r);
+  if (![lat, lng, radius].every(Number.isFinite)) throw new Error("The map link is damaged.");
+  const stores = data.s.map(r => ({
+    brand: String(r[0]), number: String(r[1]), name: String(r[2]), address: String(r[3]), city: String(r[4]),
+    state: String(r[5]), status: String(r[6]), lat: Number(r[7]), lng: Number(r[8]), miles: Number(r[9]), placeId: String(r[10] || ""),
+  })).filter(s => Number.isFinite(s.lat) && Number.isFinite(s.lng));
+  return { origin: { lat, lng, label: String(label) }, radius, stores };
+}
+
+function directionsUrl(origin, s) {
+  let url = "https://www.google.com/maps/dir/?api=1&origin=" + origin.lat + "," + origin.lng +
+            "&destination=" + s.lat + "," + s.lng;
+  if (s.placeId) url += "&destination_place_id=" + encodeURIComponent(s.placeId);
+  return url;
+}
+function placeUrl(s) {
+  return s.placeId
+    ? "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(s.name || s.brand) + "&query_place_id=" + encodeURIComponent(s.placeId)
+    : "https://www.google.com/maps/search/?api=1&query=" + s.lat + "," + s.lng;
+}
+function infoContent(origin, s) {
+  const box = el("div", { class: "iw" });
+  box.append(el("b", { text: s.brand + " #" + s.number }), el("br"));
+  if (s.name) box.append(document.createTextNode(s.name), el("br"));
+  box.append(document.createTextNode(s.address + ", " + s.city + ", " + s.state), el("br"),
+             document.createTextNode(s.miles.toFixed(1) + " miles (straight line) - " + s.status), el("br"));
+  for (const [text, href] of [["Directions", directionsUrl(origin, s)], ["Open in Google Maps", placeUrl(s)]]) {
+    box.append(el("a", { href, target: "_blank", rel: "noopener", text }));
+  }
+  return box;
+}
+
+function initMap() {
+  let payload;
+  try { payload = readPayload(); } catch (err) { showMessage(err.message || "The map link is damaged."); return; }
+  const { origin, radius, stores } = payload;
+  const map = new google.maps.Map(document.getElementById("map"), {
+    center: { lat: origin.lat, lng: origin.lng }, zoom: 11, mapTypeControl: false, streetViewControl: false,
+  });
+  const info = new google.maps.InfoWindow();
+  const bounds = new google.maps.LatLngBounds();
+
+  const circle = new google.maps.Circle({
+    map, center: map.getCenter(), radius: radius * METERS_PER_MILE, clickable: false,
+    strokeColor: "#1a73e8", strokeOpacity: .7, strokeWeight: 2, fillColor: "#1a73e8", fillOpacity: .06,
+  });
+  bounds.union(circle.getBounds());
+  new google.maps.Marker({
+    map, position: { lat: origin.lat, lng: origin.lng }, zIndex: 9999, title: "Searched location: " + origin.label,
+    icon: { path: STAR, scale: 1.5, fillColor: "#fbbc04", fillOpacity: 1, strokeColor: "#1f2933", strokeWeight: 1.5 },
+  });
+
+  const list = document.getElementById("list");
+  const seen = new Map();
+  stores.forEach(s => {
+    const color = brandColor(s.brand), faint = isPipeline(s.status);
+    seen.set(s.brand, color);
+    const marker = new google.maps.Marker({
+      map, position: { lat: s.lat, lng: s.lng }, opacity: faint ? .6 : 1,
+      title: s.brand + " #" + s.number,
+      label: { text: s.miles.toFixed(1), color: "#ffffff", fontSize: "11px", fontWeight: "700" },
+      icon: { path: google.maps.SymbolPath.CIRCLE, scale: 15, fillColor: color, fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 2 },
+    });
+    const open = () => { info.setContent(infoContent(origin, s)); info.open({ map, anchor: marker }); };
+    marker.addListener("click", open);
+    const row = el("div", { class: "row" + (faint ? " pipeline" : "") },
+      el("div", { class: "mi", text: s.miles.toFixed(1) + " mi" }),
+      el("div", { class: "dot", style: "background:" + color }),
+      el("div", {}, el("div", { class: "t", text: s.brand + " #" + s.number }),
+                    el("div", { class: "a", text: s.address + ", " + s.city + ", " + s.state + (faint ? " (" + s.status + ")" : "") })));
+    row.addEventListener("click", () => { map.panTo(marker.getPosition()); open(); });
+    list.append(row);
+  });
+
+  const legend = document.getElementById("legend");
+  legend.append(el("span", {}, el("i", { style: "background:#fbbc04;border:1px solid #1f2933" }), document.createTextNode("Searched location")));
+  seen.forEach((color, brand) => legend.append(el("span", {}, el("i", { style: "background:" + color }), document.createTextNode(brand))));
+  document.getElementById("sub").textContent =
+    stores.length + " store" + (stores.length === 1 ? "" : "s") + " within " + radius + " miles of " + origin.label +
+    ". Numbers on pins are straight-line miles.";
+  if (!stores.length) list.append(el("div", { class: "row", text: "No stores in this radius." }));
+  stores.forEach(s => bounds.extend({ lat: s.lat, lng: s.lng }));
+  map.fitBounds(bounds, 40);
+}
+
+window.gm_authFailure = () => showMessage("Google Maps would not load for this page. Tell IT: the Store Map key was rejected.");
+window.initMap = initMap;
+const s = document.createElement("script");
+s.src = "https://maps.googleapis.com/maps/api/js?key=" + encodeURIComponent(MAPS_KEY) + "&callback=initMap&loading=async&v=weekly";
+s.async = true;
+s.onerror = () => showMessage("Could not reach Google Maps. Check your internet connection.");
+document.head.append(s);
+</script>
+</body>
+</html>
