@@ -71,18 +71,20 @@ function brandColor(brand) {
 function isPipeline(status) {
   return /^(nro|new build)/i.test(String(status));
 }
-// Pin = a coloured circle with the brand name above the miles, both inside it. Drawn as an
+// Pin = a coloured circle with the brand name above a second line (miles, or the store number
+// when there is no searched point), both inside it. Drawn as an
 // SVG because a Google marker label can only hold one string. Long names get a smaller font.
-function pinIcon(color, brand, miles) {
+function pinIcon(color, brand, line2) {
   const esc = t => String(t).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  const size = 50, c = size / 2, nameSize = brand.length <= 4 ? 11 : brand.length <= 8 ? 9 : 7.5;
+  const size = 50, c = size / 2, nameSize = brand.length <= 4 ? 11 : brand.length <= 8 ? 9 : 7.5,
+    line2Size = line2.length <= 5 ? 13 : line2.length <= 7 ? 10 : 8;
   const svg =
     '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '">' +
     '<circle cx="' + c + '" cy="' + c + '" r="23" fill="' + color + '" stroke="#ffffff" stroke-width="2"/>' +
     '<text x="' + c + '" y="' + (c - 2) + '" text-anchor="middle" font-family="Arial,sans-serif" font-size="' + nameSize +
     '" font-weight="700" fill="#ffffff">' + esc(brand) + '</text>' +
-    '<text x="' + c + '" y="' + (c + 12) + '" text-anchor="middle" font-family="Arial,sans-serif" font-size="13" ' +
-    'font-weight="700" fill="#ffffff">' + esc(miles) + '</text></svg>';
+    '<text x="' + c + '" y="' + (c + 12) + '" text-anchor="middle" font-family="Arial,sans-serif" font-size="' + line2Size + '" ' +
+    'font-weight="700" fill="#ffffff">' + esc(line2) + '</text></svg>';
   return {
     url: "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg),
     scaledSize: new google.maps.Size(size, size), anchor: new google.maps.Point(c, c),
@@ -100,16 +102,26 @@ function showMessage(text) {
   document.body.replaceChildren(el("div", { id: "msg", text }));
 }
 
-// Payload layout is written by nearby.map_payload() in store-lookup.
-function readPayload() {
+// Payload layout is written by nearby.map_payload() / results_payload() in store-lookup.
+// Fragment = "z:" + base64url(zlib JSON) (current), or plain base64url JSON (older links).
+async function readPayload() {
   const frag = location.hash.slice(1);
-  if (!frag) throw new Error("Open this page from the Nearby Stores window in Store Lookup (Open Map with Distances).");
-  const b64 = frag.replace(/-/g, "+").replace(/_/g, "/");
-  const bytes = Uint8Array.from(atob(b64 + "=".repeat((4 - b64.length % 4) % 4)), c => c.charCodeAt(0));
+  if (!frag) throw new Error("Open this page from Store Lookup (Nearby Stores > Open Map with Distances, or Map Results).");
+  const packed = frag.startsWith("z:");
+  const b64 = (packed ? frag.slice(2) : frag).replace(/-/g, "+").replace(/_/g, "/");
+  let bytes = Uint8Array.from(atob(b64 + "=".repeat((4 - b64.length % 4) % 4)), c => c.charCodeAt(0));
+  if (packed) {
+    if (typeof DecompressionStream === "undefined") throw new Error("This browser is too old to open the map. Please update it.");
+    bytes = new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate"))).arrayBuffer());
+  }
   const data = JSON.parse(new TextDecoder().decode(bytes));
-  const [lat, lng, label] = data.o;
-  const radius = Number(data.r);
-  if (![lat, lng, radius].every(Number.isFinite)) throw new Error("The map link is damaged.");
+  let origin = null, radius = 0;
+  if (data.o) {
+    const [lat, lng, label] = data.o;
+    radius = Number(data.r);
+    if (![lat, lng, radius].every(Number.isFinite)) throw new Error("The map link is damaged.");
+    origin = { lat, lng, label: String(label) };
+  }
   const stores = data.s.map(r => ({
     brand: String(r[0]), number: String(r[1]), name: String(r[2]), address: String(r[3]), city: String(r[4]),
     state: String(r[5]), status: String(r[6]), lat: Number(r[7]), lng: Number(r[8]), miles: Number(r[9]), placeId: String(r[10] || ""),
@@ -117,11 +129,11 @@ function readPayload() {
       .map(([role, name, cell]) => ({ role, name: String(name || ""), cell: String(cell || "") }))
       .filter(c => c.name || c.cell),
   })).filter(s => Number.isFinite(s.lat) && Number.isFinite(s.lng));
-  return { origin: { lat, lng, label: String(label) }, radius, stores };
+  return { origin, radius, stores, omitted: Number(data.u) || 0 };
 }
 
 function directionsUrl(origin, s) {
-  let url = "https://www.google.com/maps/dir/?api=1&origin=" + origin.lat + "," + origin.lng +
+  let url = "https://www.google.com/maps/dir/?api=1" + (origin ? "&origin=" + origin.lat + "," + origin.lng : "") +
             "&destination=" + s.lat + "," + s.lng;
   if (s.placeId) url += "&destination_place_id=" + encodeURIComponent(s.placeId);
   return url;
@@ -136,7 +148,7 @@ function infoContent(origin, s) {
   box.append(el("b", { text: s.brand + " #" + s.number }), el("br"));
   if (s.name) box.append(document.createTextNode(s.name), el("br"));
   box.append(document.createTextNode(s.address + ", " + s.city + ", " + s.state), el("br"),
-             document.createTextNode(s.miles.toFixed(1) + " miles (straight line) - " + s.status), el("br"));
+             document.createTextNode((origin ? s.miles.toFixed(1) + " miles (straight line) - " : "") + s.status), el("br"));
   for (const c of s.contacts) {
     box.append(el("br"), el("b", { text: c.role + ": " }), document.createTextNode(c.name || "(no name)"));
     const digits = c.cell.replace(/[^0-9+]/g, "");  // only digits/+ ever reach the tel: link
@@ -149,34 +161,37 @@ function infoContent(origin, s) {
   return box;
 }
 
-function initMap() {
+async function initMap() {
   let payload;
-  try { payload = readPayload(); } catch (err) { showMessage(err.message || "The map link is damaged."); return; }
-  const { origin, radius, stores } = payload;
+  try { payload = await readPayload(); } catch (err) { showMessage(err.message || "The map link is damaged."); return; }
+  const { origin, radius, stores, omitted } = payload;
   const map = new google.maps.Map(document.getElementById("map"), {
-    center: { lat: origin.lat, lng: origin.lng }, zoom: 11, mapTypeControl: false, streetViewControl: false,
+    center: origin ? { lat: origin.lat, lng: origin.lng } : { lat: 39.5, lng: -98.35 }, zoom: origin ? 11 : 4,
+    mapTypeControl: false, streetViewControl: false,
   });
   const info = new google.maps.InfoWindow();
   const bounds = new google.maps.LatLngBounds();
 
-  const circle = new google.maps.Circle({
-    map, center: map.getCenter(), radius: radius * METERS_PER_MILE, clickable: false,
-    strokeColor: "#1a73e8", strokeOpacity: .7, strokeWeight: 2, fillColor: "#1a73e8", fillOpacity: .06,
-  });
-  bounds.union(circle.getBounds());
-  const star = new google.maps.Marker({
-    map, position: { lat: origin.lat, lng: origin.lng }, zIndex: 9999, title: "Searched location: " + origin.label,
-    icon: { path: STAR, scale: 1.5, fillColor: "#fbbc04", fillOpacity: 1, strokeColor: "#1f2933", strokeWeight: 1.5 },
-  });
-  star.addListener("click", () => {
-    const box = el("div", { class: "iw" }, el("b", { text: "Searched location" }), el("br"),
-                   document.createTextNode(origin.label), el("br"),
-                   document.createTextNode("Radius: " + radius + " miles"), el("br"),
-                   el("a", { href: "https://www.google.com/maps/search/?api=1&query=" + origin.lat + "," + origin.lng,
-                             target: "_blank", rel: "noopener", text: "Open in Google Maps" }));
-    info.setContent(box);
-    info.open({ map, anchor: star });
-  });
+  if (origin) {
+    const circle = new google.maps.Circle({
+      map, center: map.getCenter(), radius: radius * METERS_PER_MILE, clickable: false,
+      strokeColor: "#1a73e8", strokeOpacity: .7, strokeWeight: 2, fillColor: "#1a73e8", fillOpacity: .06,
+    });
+    bounds.union(circle.getBounds());
+    const star = new google.maps.Marker({
+      map, position: { lat: origin.lat, lng: origin.lng }, zIndex: 9999, title: "Searched location: " + origin.label,
+      icon: { path: STAR, scale: 1.5, fillColor: "#fbbc04", fillOpacity: 1, strokeColor: "#1f2933", strokeWeight: 1.5 },
+    });
+    star.addListener("click", () => {
+      const box = el("div", { class: "iw" }, el("b", { text: "Searched location" }), el("br"),
+                     document.createTextNode(origin.label), el("br"),
+                     document.createTextNode("Radius: " + radius + " miles"), el("br"),
+                     el("a", { href: "https://www.google.com/maps/search/?api=1&query=" + origin.lat + "," + origin.lng,
+                               target: "_blank", rel: "noopener", text: "Open in Google Maps" }));
+      info.setContent(box);
+      info.open({ map, anchor: star });
+    });
+  }
 
   const list = document.getElementById("list");
   const seen = new Map();
@@ -186,12 +201,12 @@ function initMap() {
     const marker = new google.maps.Marker({
       map, position: { lat: s.lat, lng: s.lng }, opacity: faint ? .6 : 1,
       title: s.brand + " #" + s.number,
-      icon: pinIcon(color, s.brand, s.miles.toFixed(1)),
+      icon: pinIcon(color, s.brand, origin ? s.miles.toFixed(1) : s.number),
     });
     const open = () => { info.setContent(infoContent(origin, s)); info.open({ map, anchor: marker }); };
     marker.addListener("click", open);
     const row = el("div", { class: "row" + (faint ? " pipeline" : "") },
-      el("div", { class: "mi", text: s.miles.toFixed(1) + " mi" }),
+      el("div", { class: "mi", text: origin ? s.miles.toFixed(1) + " mi" : "" }),
       el("div", { class: "dot", style: "background:" + color }),
       el("div", {}, el("div", { class: "t", text: s.brand + " #" + s.number }),
                     el("div", { class: "a", text: s.address + ", " + s.city + ", " + s.state + (faint ? " (" + s.status + ")" : "") })));
@@ -200,14 +215,16 @@ function initMap() {
   });
 
   const legend = document.getElementById("legend");
-  legend.append(el("span", {}, el("i", { style: "background:#fbbc04;border:1px solid #1f2933" }), document.createTextNode("Searched location")));
+  if (origin) legend.append(el("span", {}, el("i", { style: "background:#fbbc04;border:1px solid #1f2933" }), document.createTextNode("Searched location")));
   seen.forEach((color, brand) => legend.append(el("span", {}, el("i", { style: "background:" + color }), document.createTextNode(brand))));
-  document.getElementById("sub").textContent =
-    stores.length + " store" + (stores.length === 1 ? "" : "s") + " within " + radius + " miles of " + origin.label +
-    ". Numbers on pins are straight-line miles.";
-  if (!stores.length) list.append(el("div", { class: "row", text: "No stores in this radius." }));
+  const count = stores.length + " store" + (stores.length === 1 ? "" : "s");
+  document.getElementById("sub").textContent = (origin
+    ? count + " within " + radius + " miles of " + origin.label + ". Numbers on pins are straight-line miles."
+    : count + " from your Store Lookup results. Pins show the store number.") +
+    (omitted ? " " + omitted + " result" + (omitted === 1 ? "" : "s") + " not shown (no map coordinates yet)." : "");
+  if (!stores.length) list.append(el("div", { class: "row", text: origin ? "No stores in this radius." : "None of these results have map coordinates yet." }));
   stores.forEach(s => bounds.extend({ lat: s.lat, lng: s.lng }));
-  map.fitBounds(bounds, 40);
+  if (!bounds.isEmpty()) map.fitBounds(bounds, 40);
 }
 
 window.gm_authFailure = () => showMessage("Google Maps would not load for this page. Tell IT: the Store Map key was rejected.");
