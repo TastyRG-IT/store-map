@@ -99,10 +99,8 @@ function pinIcon(color, brand, number, miles, partnerColor, closed) {
     '<circle cx="' + c + '" cy="' + cy + '" r="' + R + '" fill="none" stroke="' + (closed ? "#000000" : "#ffffff") + '" stroke-width="' + (closed ? 3 : 2) + '"/>' +
     '<text x="' + c + '" y="' + (miles ? cy - 2 : cy + 3.5) + '" ' + font + ' font-size="' + nameSize + '" fill="#ffffff">' + esc(brand) + '</text>' +
     (miles ? '<text x="' + c + '" y="' + (cy + 10) + '" ' + font + ' font-size="10.5" fill="#ffffff">' + esc(miles) + '</text>' : "") +
-    // The slash runs top-left to bottom-right, with a thin white edge so it reads on any pin colour.
+    // The slash runs top-left to bottom-right.
     (closed ? '<line x1="' + (c - R * .72) + '" y1="' + (cy - R * .72) + '" x2="' + (c + R * .72) + '" y2="' + (cy + R * .72) +
-              '" stroke="#ffffff" stroke-width="4.5" stroke-linecap="round"/>' +
-              '<line x1="' + (c - R * .72) + '" y1="' + (cy - R * .72) + '" x2="' + (c + R * .72) + '" y2="' + (cy + R * .72) +
               '" stroke="#000000" stroke-width="2.2" stroke-linecap="round"/>' : "") +
     '</svg>';
   return {
