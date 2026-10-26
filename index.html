@@ -77,7 +77,7 @@ function isPipeline(status) {
 // Pin = a coloured circle with the brand name (and the miles, when there is a searched point)
 // inside it, and the store number in a small white tag floating above it. Drawn as an SVG
 // because a Google marker label can only hold one string. Long text gets a smaller font.
-// Closed and temporarily closed stores get a red ring and a slash through the circle.
+// Closed and temporarily closed stores get a black ring and a slash through the circle.
 function isClosed(status) {
   return /clos(ed|ure)/i.test(String(status));
 }
@@ -96,14 +96,14 @@ function pinIcon(color, brand, number, miles, partnerColor, closed) {
     '<circle cx="' + c + '" cy="' + cy + '" r="' + R + '" fill="' + color + '"/>' +
     // Combo store: the right half takes the partner brand's colour; the white ring is drawn last.
     (partnerColor ? '<path d="M ' + c + ' ' + (cy - R) + ' A ' + R + ' ' + R + ' 0 0 1 ' + c + ' ' + (cy + R) + ' Z" fill="' + partnerColor + '"/>' : "") +
-    '<circle cx="' + c + '" cy="' + cy + '" r="' + R + '" fill="none" stroke="' + (closed ? "#ff1a1a" : "#ffffff") + '" stroke-width="' + (closed ? 3 : 2) + '"/>' +
+    '<circle cx="' + c + '" cy="' + cy + '" r="' + R + '" fill="none" stroke="' + (closed ? "#000000" : "#ffffff") + '" stroke-width="' + (closed ? 3 : 2) + '"/>' +
     '<text x="' + c + '" y="' + (miles ? cy - 2 : cy + 3.5) + '" ' + font + ' font-size="' + nameSize + '" fill="#ffffff">' + esc(brand) + '</text>' +
     (miles ? '<text x="' + c + '" y="' + (cy + 10) + '" ' + font + ' font-size="10.5" fill="#ffffff">' + esc(miles) + '</text>' : "") +
-    // The slash runs top-left to bottom-right, white underneath so it reads on any pin colour.
+    // The slash runs top-left to bottom-right, with a thin white edge so it reads on any pin colour.
     (closed ? '<line x1="' + (c - R * .72) + '" y1="' + (cy - R * .72) + '" x2="' + (c + R * .72) + '" y2="' + (cy + R * .72) +
-              '" stroke="#ffffff" stroke-width="7" stroke-linecap="round"/>' +
+              '" stroke="#ffffff" stroke-width="4.5" stroke-linecap="round"/>' +
               '<line x1="' + (c - R * .72) + '" y1="' + (cy - R * .72) + '" x2="' + (c + R * .72) + '" y2="' + (cy + R * .72) +
-              '" stroke="#ff1a1a" stroke-width="4" stroke-linecap="round"/>' : "") +
+              '" stroke="#000000" stroke-width="2.2" stroke-linecap="round"/>' : "") +
     '</svg>';
   return {
     url: "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg),
