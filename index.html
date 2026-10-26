@@ -77,23 +77,33 @@ function isPipeline(status) {
 // Pin = a coloured circle with the brand name (and the miles, when there is a searched point)
 // inside it, and the store number in a small white tag floating above it. Drawn as an SVG
 // because a Google marker label can only hold one string. Long text gets a smaller font.
-function pinIcon(color, brand, number, miles, partnerColor) {
+// Closed and temporarily closed stores get a red ring and a slash through the circle.
+function isClosed(status) {
+  return /clos(ed|ure)/i.test(String(status));
+}
+function pinIcon(color, brand, number, miles, partnerColor, closed) {
   const esc = t => String(t).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  const R = 19, w = 46, tagH = 15, cy = tagH + 2 + R + 1, h = cy + R + 2, c = w / 2;
+  const tagText = String(number);
+  const tagW = 10 + tagText.length * 6.5;
+  const R = 19, w = Math.max(46, Math.ceil(tagW) + 2), tagH = 15, cy = tagH + 2 + R + 1, h = cy + R + 2, c = w / 2;
   const nameSize = brand.length <= 4 ? 10.5 : brand.length <= 6 ? 9 : brand.length <= 9 ? 7.5 : 6.5,
-    tagW = Math.min(w, 10 + String(number).length * 6.5),
     font = 'font-family="Arial,sans-serif" font-weight="700" text-anchor="middle"';
   const svg =
     '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">' +
     '<rect x="' + (c - tagW / 2) + '" y="1" width="' + tagW + '" height="' + (tagH - 2) + '" rx="4" fill="#ffffff" ' +
     'stroke="' + color + '" stroke-width="1.5"/>' +
-    '<text x="' + c + '" y="' + (tagH - 4) + '" ' + font + ' font-size="10" fill="#202124">' + esc(number) + '</text>' +
+    '<text x="' + c + '" y="' + (tagH - 4) + '" ' + font + ' font-size="10" fill="#202124">' + esc(tagText) + '</text>' +
     '<circle cx="' + c + '" cy="' + cy + '" r="' + R + '" fill="' + color + '"/>' +
     // Combo store: the right half takes the partner brand's colour; the white ring is drawn last.
     (partnerColor ? '<path d="M ' + c + ' ' + (cy - R) + ' A ' + R + ' ' + R + ' 0 0 1 ' + c + ' ' + (cy + R) + ' Z" fill="' + partnerColor + '"/>' : "") +
-    '<circle cx="' + c + '" cy="' + cy + '" r="' + R + '" fill="none" stroke="#ffffff" stroke-width="2"/>' +
+    '<circle cx="' + c + '" cy="' + cy + '" r="' + R + '" fill="none" stroke="' + (closed ? "#ff1a1a" : "#ffffff") + '" stroke-width="' + (closed ? 3 : 2) + '"/>' +
     '<text x="' + c + '" y="' + (miles ? cy - 2 : cy + 3.5) + '" ' + font + ' font-size="' + nameSize + '" fill="#ffffff">' + esc(brand) + '</text>' +
     (miles ? '<text x="' + c + '" y="' + (cy + 10) + '" ' + font + ' font-size="10.5" fill="#ffffff">' + esc(miles) + '</text>' : "") +
+    // The slash runs top-left to bottom-right, white underneath so it reads on any pin colour.
+    (closed ? '<line x1="' + (c - R * .72) + '" y1="' + (cy - R * .72) + '" x2="' + (c + R * .72) + '" y2="' + (cy + R * .72) +
+              '" stroke="#ffffff" stroke-width="7" stroke-linecap="round"/>' +
+              '<line x1="' + (c - R * .72) + '" y1="' + (cy - R * .72) + '" x2="' + (c + R * .72) + '" y2="' + (cy + R * .72) +
+              '" stroke="#ff1a1a" stroke-width="4" stroke-linecap="round"/>' : "") +
     '</svg>';
   return {
     url: "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg),
@@ -155,9 +165,10 @@ function placeUrl(s) {
     : "https://www.google.com/maps/search/?api=1&query=" + s.lat + "," + s.lng;
 }
 const fullBrand = s => s.brand + (s.partner ? " + " + s.partner : "");
+const storeTitle = s => fullBrand(s) + " #" + s.number;
 function infoContent(origin, s) {
   const box = el("div", { class: "iw" });
-  box.append(el("b", { text: fullBrand(s) + " #" + s.number }), el("br"));
+  box.append(el("b", { text: storeTitle(s) }), el("br"));
   if (s.name) box.append(document.createTextNode(s.name), el("br"));
   box.append(document.createTextNode(s.address + ", " + s.city + ", " + s.state), el("br"),
              document.createTextNode((origin ? s.miles.toFixed(1) + " miles (straight line) - " : "") + s.status), el("br"));
@@ -216,17 +227,17 @@ async function initMap() {
       // optimized:false = one real element per pin. Google's default repaints a few hundred
       // pins onto a canvas, which hides them from the page (and from titles/tests).
       map, position: { lat: s.lat, lng: s.lng }, opacity: faint ? .6 : 1, optimized: false,
-      title: fullBrand(s) + " #" + s.number,
+      title: storeTitle(s),
       icon: pinIcon(color, s.partner ? shortName(s.brand) + "+" + shortName(s.partner) : shortName(s.brand), s.number,
-                    origin ? s.miles.toFixed(1) : "", partnerColor),
+                    origin ? s.miles.toFixed(1) : "", partnerColor, isClosed(s.status)),
     });
     const open = () => { info.setContent(infoContent(origin, s)); info.open({ map, anchor: marker }); };
     marker.addListener("click", open);
     const row = el("div", { class: "row" + (faint ? " pipeline" : "") },
       el("div", { class: "mi", text: origin ? s.miles.toFixed(1) + " mi" : "" }),
       el("div", { class: "dot", style: "background:" + swatch }),
-      el("div", {}, el("div", { class: "t", text: fullBrand(s) + " #" + s.number }),
-                    el("div", { class: "a", text: s.address + ", " + s.city + ", " + s.state + (faint ? " (" + s.status + ")" : "") })));
+      el("div", {}, el("div", { class: "t", text: storeTitle(s) }),
+                    el("div", { class: "a", text: s.address + ", " + s.city + ", " + s.state + (faint || isClosed(s.status) ? " (" + s.status + ")" : "") })));
     row.addEventListener("click", () => { map.panTo(marker.getPosition()); open(); });
     list.append(row);
   });
