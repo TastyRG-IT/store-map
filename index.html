@@ -70,6 +70,23 @@ function brandColor(brand) {
 function isPipeline(status) {
   return /^(nro|new build)/i.test(String(status));
 }
+// Pin = a coloured circle with the brand name above the miles, both inside it. Drawn as an
+// SVG because a Google marker label can only hold one string. Long names get a smaller font.
+function pinIcon(color, brand, miles) {
+  const esc = t => String(t).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const size = 50, c = size / 2, nameSize = brand.length <= 4 ? 11 : brand.length <= 8 ? 9 : 7.5;
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '">' +
+    '<circle cx="' + c + '" cy="' + c + '" r="23" fill="' + color + '" stroke="#ffffff" stroke-width="2"/>' +
+    '<text x="' + c + '" y="' + (c - 2) + '" text-anchor="middle" font-family="Arial,sans-serif" font-size="' + nameSize +
+    '" font-weight="700" fill="#ffffff">' + esc(brand) + '</text>' +
+    '<text x="' + c + '" y="' + (c + 12) + '" text-anchor="middle" font-family="Arial,sans-serif" font-size="13" ' +
+    'font-weight="700" fill="#ffffff">' + esc(miles) + '</text></svg>';
+  return {
+    url: "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg),
+    scaledSize: new google.maps.Size(size, size), anchor: new google.maps.Point(c, c),
+  };
+}
 function el(tag, props, ...kids) {
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(props || {})) {
@@ -150,8 +167,7 @@ function initMap() {
     const marker = new google.maps.Marker({
       map, position: { lat: s.lat, lng: s.lng }, opacity: faint ? .6 : 1,
       title: s.brand + " #" + s.number,
-      label: { text: s.miles.toFixed(1), color: "#ffffff", fontSize: "11px", fontWeight: "700" },
-      icon: { path: google.maps.SymbolPath.CIRCLE, scale: 15, fillColor: color, fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 2 },
+      icon: pinIcon(color, s.brand, s.miles.toFixed(1)),
     });
     const open = () => { info.setContent(infoContent(origin, s)); info.open({ map, anchor: marker }); };
     marker.addListener("click", open);
