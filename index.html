@@ -154,9 +154,18 @@ function initMap() {
     strokeColor: "#1a73e8", strokeOpacity: .7, strokeWeight: 2, fillColor: "#1a73e8", fillOpacity: .06,
   });
   bounds.union(circle.getBounds());
-  new google.maps.Marker({
+  const star = new google.maps.Marker({
     map, position: { lat: origin.lat, lng: origin.lng }, zIndex: 9999, title: "Searched location: " + origin.label,
     icon: { path: STAR, scale: 1.5, fillColor: "#fbbc04", fillOpacity: 1, strokeColor: "#1f2933", strokeWeight: 1.5 },
+  });
+  star.addListener("click", () => {
+    const box = el("div", { class: "iw" }, el("b", { text: "Searched location" }), el("br"),
+                   document.createTextNode(origin.label), el("br"),
+                   document.createTextNode("Radius: " + radius + " miles"), el("br"),
+                   el("a", { href: "https://www.google.com/maps/search/?api=1&query=" + origin.lat + "," + origin.lng,
+                             target: "_blank", rel: "noopener", text: "Open in Google Maps" }));
+    info.setContent(box);
+    info.open({ map, anchor: star });
   });
 
   const list = document.getElementById("list");
